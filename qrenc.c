@@ -39,6 +39,7 @@ static int casesensitive = 1;
 static int eightbit = 0;
 static int version = 0;
 static int size = 3;
+static int ratio = 1;
 static int margin = -1;
 static int dpi = 72;
 static int structured = 0;
@@ -49,8 +50,11 @@ static int inline_svg = 0;
 static int strict_versioning = 0;
 static QRecLevel level = QR_ECLEVEL_L;
 static QRencodeMode hint = QR_MODE_8;
+static unsigned int use_transparent = 0;
 static unsigned char fg_color[4] = {0, 0, 0, 255};
 static unsigned char bg_color[4] = {255, 255, 255, 255};
+static unsigned char tfg_color[4] = {0, 0, 0, 64};
+static unsigned char tbg_color[4] = {0, 0, 0, 64};
 
 static int verbose = 0;
 
@@ -79,10 +83,12 @@ static const struct option options[] = {
 	{"read-from"     , required_argument, NULL, 'r'},
 	{"level"         , required_argument, NULL, 'l'},
 	{"size"          , required_argument, NULL, 's'},
+	{"ratio"         , required_argument, NULL, 'R'},
 	{"symversion"    , required_argument, NULL, 'v'},
 	{"margin"        , required_argument, NULL, 'm'},
 	{"dpi"           , required_argument, NULL, 'd'},
 	{"type"          , required_argument, NULL, 't'},
+	{"transparent"   , no_argument      , NULL, 'T'},
 	{"structured"    , no_argument      , NULL, 'S'},
 	{"kanji"         , no_argument      , NULL, 'k'},
 	{"casesensitive" , no_argument      , NULL, 'c'},
@@ -95,12 +101,14 @@ static const struct option options[] = {
 	{"strict-version", no_argument      , &strict_versioning, 1},
 	{"foreground"    , required_argument, NULL, 'f'},
 	{"background"    , required_argument, NULL, 'b'},
+	{"tforeground"   , required_argument, NULL, 'F'},
+	{"tbackground"   , required_argument, NULL, 'B'},
 	{"version"       , no_argument      , NULL, 'V'},
 	{"verbose"       , no_argument      , &verbose, 1},
 	{NULL, 0, NULL, 0}
 };
 
-static char *optstring = "ho:r:l:s:v:m:d:t:Skci8MV";
+static char *optstring = "ho:r:l:s:R:v:m:d:t:TSkci8MV";
 
 static void usage(int help, int longopt, int status)
 {
@@ -137,6 +145,10 @@ static void usage(int help, int longopt, int status)
 "  -t {PNG,PNG32,EPS,SVG,XPM,ANSI,ANSI256,ASCII,ASCIIi,UTF8,UTF8i,ANSIUTF8,ANSIUTF8i,ANSI256UTF8},\n"
 "  --type={PNG,PNG32,EPS,SVG,XPM,ANSI,ANSI256,ASCII,ASCIIi,UTF8,UTF8i,ANSIUTF8,ANSIUTF8i,ANSI256UTF8}\n"
 "               specify the type of the generated image. (default=PNG)\n\n"
+"  -T, --transparent\n"
+"               make QR transparent, with -t PNG32, opaque info-pixels area ~= 1/(--size^2)th of standard\n"
+"  -R NUMBER, --ratio=NUMBER\n"
+"               adjust area ratio for info-pixels to --ratio relative to --size\n"
 "  -S, --structured\n"
 "               make structured symbols. Version must be specified with '-v'.\n\n"
 "  -k, --kanji  assume that the input text contains kanji (shift-jis).\n\n"
@@ -152,6 +164,8 @@ static void usage(int help, int longopt, int status)
 "      --inline only useful for SVG output, generates an SVG without the XML tag.\n\n"
 "      --foreground=RRGGBB[AA]\n"
 "      --background=RRGGBB[AA]\n"
+"      --tforeground=RRGGBB[AA]\n"
+"      --tbackground=RRGGBB[AA]\n"
 "               specify foreground/background color in hexadecimal notation.\n"
 "               6-digit (RGB) or 8-digit (RGBA) form are supported.\n"
 "               Color output support available only in PNG, EPS and SVG.\n\n"
@@ -194,6 +208,8 @@ static void usage(int help, int longopt, int status)
 "  -d NUMBER    specify the DPI of the generated PNG. (default=72)\n"
 "  -t {PNG,PNG32,EPS,SVG,XPM,ANSI,ANSI256,ASCII,ASCIIi,UTF8,UTF8i,ANSIUTF8,ANSIUTF8i,ANSI256UTF8}\n"
 "               specify the type of the generated image. (default=PNG)\n"
+"  -T           make QR transparent, with -t PNG32, opaque info-pixels area ~= 1/9th of standard\n"
+"  -R NUMBER    adjust area ratio for info-pixels to -R relative to -s\n"
 "  -S           make structured symbols. Version number must be specified with '-v'.\n"
 "  -k           assume that the input text contains kanji (shift-jis).\n"
 "  -c           encode lower-case alphabet characters in 8-bit mode. (default)\n"
@@ -287,6 +303,29 @@ static void fillRow(unsigned char *row, int num, const unsigned char color[])
 		row += 4;
 	}
 }
+static unsigned subpixel_ishicontrast(int y, int subpixels_per_pixel)
+{
+	if (subpixels_per_pixel < 1) return 1;
+	int r = ratio;
+	int m = subpixels_per_pixel;
+	int y1 = (((subpixels_per_pixel*(0+r)))+(m-1))/m;
+	int y2 = (((subpixels_per_pixel*(m-r)))+(m-1))/m;
+	if ((y >= y1) && (y < y2)) return 1;
+	return 0;
+}
+static unsigned location_ishiconstrast(int x, int y, unsigned qr_size) {
+	// check mask feature of qr
+	if (y == 6) return 1;	// timing horizontal
+	if (x == 6) return 1;	// timing vertical
+	// corners 	
+	if ((y <= 6) && (x <= 6)) return 1;
+	if ((y <= 6) && (x >= (qr_size - 7))) return 1;
+	if ((y >= (qr_size-7)) && (x <= 6)) return 1;
+	// marker right-bottom
+	if ((x >= (qr_size-9) && (x < (qr_size-4))) &&
+	    (y >= (qr_size-9) && (y < (qr_size-4))) ) return 1;
+	return 0;
+}
 #endif
 
 static int writePNG(const QRcode *qrcode, const char *outfile, enum imageType type)
@@ -297,15 +336,22 @@ static int writePNG(const QRcode *qrcode, const char *outfile, enum imageType ty
 	png_infop info_ptr;
 	png_colorp palette = NULL;
 	png_byte alpha_values[2];
-	unsigned char *row, *p, *q;
+	unsigned char *row, *trow, *p, *q, *qt;
 	int x, y, xx, yy, bit;
 	int realwidth;
 
 	realwidth = (qrcode->width + margin * 2) * size;
 	if(type == PNG_TYPE) {
-		row = (unsigned char *)malloc((size_t)((realwidth + 7) / 8));
+		if (use_transparent) {
+			row = (unsigned char *)malloc((size_t)((realwidth + 15) / 16));
+			trow = (unsigned char *)malloc((size_t)((realwidth + 15) / 16));
+		} else {
+			row = (unsigned char *)malloc((size_t)((realwidth + 7) / 8));
+			trow = (unsigned char *)malloc((size_t)((realwidth + 7) / 8));
+		}
 	} else if(type == PNG32_TYPE) {
 		row = (unsigned char *)malloc((size_t)realwidth * 4);
+		trow = (unsigned char *)malloc((size_t)realwidth * 4);
 	} else {
 		fprintf(stderr, "Internal error.\n");
 		exit(EXIT_FAILURE);
@@ -363,6 +409,8 @@ static int writePNG(const QRcode *qrcode, const char *outfile, enum imageType ty
 	}
 
 	png_init_io(png_ptr, fp);
+	size_t twidth = use_transparent ? (size_t)((realwidth + 3) / 4) : 
+                                          (size_t)((realwidth + 7) / 8);
 	if(type == PNG_TYPE) {
 		png_set_IHDR(png_ptr, info_ptr,
 				(unsigned int)realwidth, (unsigned int)realwidth,
@@ -421,32 +469,46 @@ static int writePNG(const QRcode *qrcode, const char *outfile, enum imageType ty
 			png_write_row(png_ptr, row);
 		}
 	} else {
-	/* top margin */
+		/* top margin */
 		fillRow(row, realwidth, bg_color);
+		fillRow(trow, realwidth, tbg_color);
 		for(y = 0; y < margin * size; y++) {
-			png_write_row(png_ptr, row);
+			png_write_row(png_ptr, use_transparent?trow:row);
 		}
 
 		/* data */
 		p = qrcode->data;
 		for(y = 0; y < qrcode->width; y++) {
-			fillRow(row, realwidth, bg_color);
+			fillRow(row, realwidth, use_transparent?tbg_color:bg_color);
+			fillRow(trow, realwidth, use_transparent?tbg_color:bg_color);
 			for(x = 0; x < qrcode->width; x++) {
+				unsigned ty = location_ishiconstrast(x,y,qrcode->width);
 				for(xx = 0; xx < size; xx++) {
-					if(*p & 1) {
-						memcpy(&row[((margin + x) * size + xx) * 4], fg_color, 4);
+					unsigned pixel = (*p & 1);
+					if (!use_transparent || ty) {
+						memcpy( &row[((margin + x) * size + xx) * 4], pixel ? fg_color : bg_color, 4);
+						memcpy(&trow[((margin + x) * size + xx) * 4], pixel ? fg_color : bg_color, 4);
+					} else {
+						if (subpixel_ishicontrast(xx, size)) {
+							memcpy( &row[((margin + x) * size + xx) * 4], pixel ? tfg_color : tbg_color, 4);
+							memcpy(&trow[((margin + x) * size + xx) * 4], pixel ?  fg_color :  bg_color, 4);
+						} else {
+							memcpy( &row[((margin + x) * size + xx) * 4], pixel ? tfg_color : tbg_color, 4);
+							memcpy(&trow[((margin + x) * size + xx) * 4], pixel ? tfg_color : tbg_color, 4);
+						}
 					}
 				}
 				p++;
 			}
 			for(yy = 0; yy < size; yy++) {
-				png_write_row(png_ptr, row);
+				png_write_row(png_ptr, subpixel_ishicontrast(yy, size)?trow:row);
 			}
 		}
 		/* bottom margin */
 		fillRow(row, realwidth, bg_color);
+		fillRow(trow, realwidth, tbg_color);
 		for(y = 0; y < margin * size; y++) {
-			png_write_row(png_ptr, row);
+			png_write_row(png_ptr, use_transparent?trow:row);
 		}
 	}
 
@@ -455,6 +517,7 @@ static int writePNG(const QRcode *qrcode, const char *outfile, enum imageType ty
 
 	fclose(fp);
 	free(row);
+	free(trow);
 	free(palette);
 
 	return 0;
@@ -1273,6 +1336,13 @@ int main(int argc, char **argv)
 					exit(EXIT_FAILURE);
 				}
 				break;
+			case 'R':
+				ratio = atoi(optarg);
+				if(ratio <= 0) {
+					fprintf(stderr, "Invalid ratio: %d\n", size);
+					exit(EXIT_FAILURE);
+				}
+				break;
 			case 'v':
 				version = atoi(optarg);
 				if(version < 0) {
@@ -1354,6 +1424,9 @@ int main(int argc, char **argv)
 			case 'S':
 				structured = 1;
 				break;
+			case 'T':
+				use_transparent = 1;
+				break;
 			case 'k':
 				hint = QR_MODE_KANJI;
 				break;
@@ -1375,9 +1448,21 @@ int main(int argc, char **argv)
 					exit(EXIT_FAILURE);
 				}
 				break;
+			case 'F':
+				if(color_set(tfg_color, optarg)) {
+					fprintf(stderr, "Invalid transparent foreground color value.\n");
+					exit(EXIT_FAILURE);
+				}
+				break;
 			case 'b':
 				if(color_set(bg_color, optarg)) {
 					fprintf(stderr, "Invalid background color value.\n");
+					exit(EXIT_FAILURE);
+				}
+				break;
+			case 'B':
+				if(color_set(tbg_color, optarg)) {
+					fprintf(stderr, "Invalid transparent background color value.\n");
 					exit(EXIT_FAILURE);
 				}
 				break;
