@@ -51,10 +51,11 @@ static int strict_versioning = 0;
 static QRecLevel level = QR_ECLEVEL_L;
 static QRencodeMode hint = QR_MODE_8;
 static unsigned int use_transparent = 0;
+static unsigned int enable_timing = 0;
 static unsigned char fg_color[4] = {0, 0, 0, 255};
 static unsigned char bg_color[4] = {255, 255, 255, 255};
-static unsigned char tfg_color[4] = {0, 0, 0, 64};
-static unsigned char tbg_color[4] = {0, 0, 0, 64};
+static unsigned char tfg_color[4] = {0, 0, 0, 192};
+static unsigned char tbg_color[4] = {0, 0, 0, 192};
 
 static int verbose = 0;
 
@@ -162,10 +163,8 @@ static void usage(int help, int longopt, int status)
 "      --svg-path\n"
 "               use single path to draw modules for SVG.\n\n"
 "      --inline only useful for SVG output, generates an SVG without the XML tag.\n\n"
-"      --foreground=RRGGBB[AA]\n"
-"      --background=RRGGBB[AA]\n"
-"      --tforeground=RRGGBB[AA]\n"
-"      --tbackground=RRGGBB[AA]\n"
+"      --[t]foreground=RRGGBB[AA]\n"
+"      --[t]background=RRGGBB[AA]\n"
 "               specify foreground/background color in hexadecimal notation.\n"
 "               6-digit (RGB) or 8-digit (RGBA) form are supported.\n"
 "               Color output support available only in PNG, EPS and SVG.\n\n"
@@ -315,8 +314,10 @@ static unsigned subpixel_ishicontrast(int y, int subpixels_per_pixel)
 }
 static unsigned location_ishiconstrast(int x, int y, unsigned qr_size) {
 	// check mask feature of qr
-	if (y == 6) return 1;	// timing horizontal
-	if (x == 6) return 1;	// timing vertical
+	if (enable_timing) {
+		if (y == 6) return 1;	// timing horizontal
+		if (x == 6) return 1;	// timing vertical
+	}
 	// corners 	
 	if ((y <= 6) && (x <= 6)) return 1;
 	if ((y <= 6) && (x >= (qr_size - 7))) return 1;
@@ -1107,6 +1108,7 @@ static void qrencode(const unsigned char *intext, int length, const char *outfil
 		fprintf(stderr, "Failed to encode the input data: Input data too large\n");
 		exit(EXIT_FAILURE);
 	}
+	fprintf(stderr, "encoded the input data %u bytes\n", length);
 
 	if(verbose) {
 		fprintf(stderr, "File: %s, Version: %d\n", (outfile!=NULL)?outfile:"(stdout)", qrcode->version);
